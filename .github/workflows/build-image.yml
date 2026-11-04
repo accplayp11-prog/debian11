@@ -1,0 +1,98 @@
+name: Build & Push Debian 11 Image to VCR
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "Dockerfile"
+      - ".github/workflows/build-image.yml"
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (default: latest)"
+        required: false
+        default: "latest"
+
+jobs:
+  build-and-push:
+    name: Build and push Debian 11 image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set image tag
+        id: tag
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="latest"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Link Vercel project
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          test -n "$VERCEL_TOKEN" || (echo "VERCEL_TOKEN is missing" && exit 1)
+          test -n "$VERCEL_ORG_ID" || (echo "VERCEL_ORG_ID is missing" && exit 1)
+          test -n "$VERCEL_PROJECT_ID" || (echo "VERCEL_PROJECT_ID is missing" && exit 1)
+
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' \
+            "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+
+          cat .vercel/project.json
+
+      - name: Authenticate Docker with VCR
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          vercel vcr login docker --token "$VERCEL_TOKEN"
+
+      - name: Build and push Debian 11 image
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          echo "Building debian-11-terminal:${TAG}..."
+
+          vercel vcr build docker . "debian-11-terminal:${TAG}" \
+            --push \
+            --token "$VERCEL_TOKEN"
+
+          echo "Image pushed: debian-11-terminal:${TAG}"
+
+      - name: Summary
+        if: success()
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+
+          {
+            echo "## Debian 11 Image Published"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Repository | debian-11-terminal |"
+            echo "| Tag | ${TAG} |"
+            echo "| SANDBOX_IMAGE | debian-11-terminal:${TAG} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          
