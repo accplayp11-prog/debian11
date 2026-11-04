@@ -1,0 +1,110 @@
+# =============================================================================
+# GitHub Actions: Build and push Debian 11 image to Vercel Container Registry
+# =============================================================================
+# Triggers:
+#   - Push to main branch when Dockerfile changes
+#   - Manual trigger (workflow_dispatch) with optional tag input
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   VERCEL_TOKEN       — Vercel API token (create at vercel.com/account/tokens)
+#   VERCEL_ORG_ID      — Your Vercel team/org ID (from .vercel/project.json)
+#   VERCEL_PROJECT_ID  — Your Vercel project ID (from .vercel/project.json)
+#
+# How to get VERCEL_ORG_ID and VERCEL_PROJECT_ID:
+#   Run: vercel link  (in the project root)
+#   Then: cat .vercel/project.json
+#   { "orgId": "team_xxx", "projectId": "prj_xxx" }
+# =============================================================================
+
+name: Build & Push Debian 11 Image to VCR
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "Dockerfile"
+      - ".github/workflows/build-image.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (default: latest)"
+        required: false
+        default: "latest"
+
+jobs:
+  build-and-push:
+    name: Build linux/amd64 image and push to VCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Set up Docker Buildx
+        # Required for multi-platform builds and zstd compression
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set image tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Link Vercel project
+        # Creates .vercel/project.json from secrets so vercel vcr build
+        # knows which team/project to push to.
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          mkdir -p .vercel
+          cat > .vercel/project.json << JSON
+          {
+            "orgId": "${VERCEL_ORG_ID}",
+            "projectId": "${VERCEL_PROJECT_ID}"
+          }
+          JSON
+          echo "✅ .vercel/project.json written"
+
+      - name: Authenticate Docker with VCR
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          vercel vcr login docker --token "$VERCEL_TOKEN"
+          echo "✅ Docker authenticated with VCR"
+
+      - name: Build and push Debian 11 image
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          echo "Building debian-11-terminal:${TAG}..."
+          vercel vcr build docker . "debian-11-terminal:${TAG}" --push --token "$VERCEL_TOKEN"
+          echo "✅ Image pushed: debian-11-terminal:${TAG}"
+
+      - name: Summary
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          echo "## ✅ Image Published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Repository | \`debian-11-terminal\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tag | \`${TAG}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| SANDBOX_IMAGE env var | \`debian-11-terminal:${TAG}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Next:** Check image status in Vercel dashboard → Storage → Container Registry." >> "$GITHUB_STEP_SUMMARY"
+          echo "Wait for **Ready** before the sandbox can use the image." >> "$GITHUB_STEP_SUMMARY"
