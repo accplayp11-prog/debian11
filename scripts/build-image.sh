@@ -1,107 +1,91 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Build and push the Debian 11 custom image to Vercel Container Registry (VCR)
+# Build and push the Debian 11 image to Vercel Container Registry (VCR)
 # =============================================================================
-# Usage: ./scripts/build-image.sh [team-slug] [project-slug] [tag]
+# Uses the OFFICIAL Vercel CLI workflow:
+#   vercel vcr login docker     — authenticates Docker with VCR for this project
+#   vercel vcr build docker .   — builds linux/amd64, pushes to VCR
 #
 # Prerequisites:
-#   1. Docker installed and running locally
-#   2. Vercel CLI installed: npm install -g vercel
-#   3. Logged in to Vercel: vercel login
-#   4. Linked to your project: vercel link
+#   npm install -g vercel        (Vercel CLI)
+#   vercel login                 (authenticate)
+#   vercel link                  (link project — creates .vercel/project.json)
+#   Docker Desktop / daemon running
 #
-# This script will:
-#   1. Authenticate Docker with VCR
-#   2. Build the Debian 11 image
-#   3. Tag it for VCR
-#   4. Push it to VCR
+# Usage:
+#   ./scripts/build-image.sh [tag]
+#   ./scripts/build-image.sh latest
+#   ./scripts/build-image.sh v1.1
+# =============================================================================
 
 set -euo pipefail
 
-# --- Configuration ---
-TEAM_SLUG="${1:-your-team-slug}"
-PROJECT_SLUG="${2:-debian-web-terminal}"
-IMAGE_TAG="${3:-latest}"
 REPO_NAME="debian-11-terminal"
-
-VCR_IMAGE="vcr.vercel.com/${TEAM_SLUG}/${PROJECT_SLUG}/${REPO_NAME}:${IMAGE_TAG}"
+IMAGE_TAG="${1:-latest}"
 
 echo ""
-echo "╔══════════════════════════════════════════════════╗"
-echo "║   Debian Web Terminal — VCR Image Builder        ║"
-echo "╚══════════════════════════════════════════════════╝"
+echo "╔══════════════════════════════════════════════════════╗"
+echo "║   Debian Web Terminal — VCR Image Builder            ║"
+echo "╚══════════════════════════════════════════════════════╝"
 echo ""
-echo "Team:    ${TEAM_SLUG}"
-echo "Project: ${PROJECT_SLUG}"
-echo "Image:   ${VCR_IMAGE}"
+echo "Repository : ${REPO_NAME}"
+echo "Tag        : ${IMAGE_TAG}"
 echo ""
 
-# --- Authenticate with VCR ---
-echo "🔑 Authenticating Docker with Vercel Container Registry..."
-vercel whoami > /dev/null 2>&1 || {
-    echo "❌ Not logged in to Vercel. Run: vercel login"
-    exit 1
+# --- Verify prerequisites ---
+command -v vercel >/dev/null 2>&1 || {
+  echo "❌ Vercel CLI not found. Install: npm install -g vercel"
+  exit 1
+}
+command -v docker >/dev/null 2>&1 || {
+  echo "❌ Docker not found. Install Docker Desktop."
+  exit 1
+}
+vercel whoami >/dev/null 2>&1 || {
+  echo "❌ Not logged in to Vercel. Run: vercel login"
+  exit 1
+}
+[ -f ".vercel/project.json" ] || {
+  echo "❌ Project not linked. Run: vercel link"
+  exit 1
 }
 
-# Get Vercel token and authenticate Docker
-# Option 1: Using vercel vcr login (if available via plugin)
-if command -v vercel >/dev/null 2>&1; then
-    VERCEL_TOKEN=$(vercel whoami --token 2>/dev/null || echo "")
-    if [ -z "$VERCEL_TOKEN" ]; then
-        echo "Using VERCEL_TOKEN environment variable..."
-        VERCEL_TOKEN="${VERCEL_TOKEN:-}"
-    fi
-fi
-
-# Docker login to VCR
-# Note: VCR uses your Vercel token as the password
-echo "Logging in to vcr.vercel.com..."
-echo "${VERCEL_TOKEN}" | docker login vcr.vercel.com \
-    --username "$(vercel whoami)" \
-    --password-stdin 2>/dev/null || {
-    echo ""
-    echo "⚠️  Automatic Docker login failed. Try manual authentication:"
-    echo "   vercel vcr login  (if using Vercel CLI plugin)"
-    echo "   OR"
-    echo "   export DOCKER_HOST=... (if using Vercel's build system)"
-    echo ""
-    echo "Attempting to build anyway..."
-}
-
-# --- Build the image ---
+# --- Authenticate Docker with VCR for this project ---
+echo "🔑 Authenticating Docker with VCR..."
+vercel vcr login docker
+echo "✅ Docker authenticated with VCR"
 echo ""
-echo "🏗️  Building Debian 11 Docker image..."
+
+# --- Build and push with the official CLI command ---
+# vercel vcr build docker:
+#   - Builds the Dockerfile in the current directory
+#   - Targets linux/amd64 (required by Vercel Sandbox)
+#   - Applies zstd compression (recommended)
+#   - Pushes directly to vcr.vercel.com/<team>/<project>/<repo>:<tag>
+#   - The <team> and <project> are read from .vercel/project.json automatically
+
+echo "🏗️  Building and pushing Debian 11 image to VCR..."
+echo "    Command: vercel vcr build docker . ${REPO_NAME}:${IMAGE_TAG} --push"
 echo ""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-docker build \
-    --platform linux/amd64 \
-    --tag "${REPO_NAME}:${IMAGE_TAG}" \
-    --tag "${VCR_IMAGE}" \
-    --file "${PROJECT_ROOT}/Dockerfile" \
-    "${PROJECT_ROOT}"
+cd "$PROJECT_ROOT"
+vercel vcr build docker . "${REPO_NAME}:${IMAGE_TAG}" --push
 
 echo ""
-echo "✅ Image built successfully: ${REPO_NAME}:${IMAGE_TAG}"
-
-# --- Push to VCR ---
+echo "✅ Image pushed: ${REPO_NAME}:${IMAGE_TAG}"
 echo ""
-echo "📤 Pushing image to Vercel Container Registry..."
-docker push "${VCR_IMAGE}"
-
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "NEXT STEPS:"
 echo ""
-echo "✅ Image pushed: ${VCR_IMAGE}"
+echo "1. Check the image is READY in Vercel dashboard:"
+echo "   Project → Storage → Container Registry"
+echo "   Wait for status: Ready  (not Preparing/Unoptimized)"
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Next steps:"
+echo "2. Verify/set SANDBOX_IMAGE in Vercel env vars:"
+echo "   SANDBOX_IMAGE=${REPO_NAME}:${IMAGE_TAG}"
 echo ""
-echo "1. Set SANDBOX_IMAGE in Vercel environment variables:"
-echo "   ${REPO_NAME}:${IMAGE_TAG}"
-echo ""
-echo "   OR if referencing the full VCR URL:"
-echo "   ${VCR_IMAGE}"
-echo ""
-echo "2. The sandbox.ts library will use this image."
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "3. Redeploy your Vercel project."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
