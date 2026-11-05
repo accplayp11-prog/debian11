@@ -1,3 +1,4 @@
+
 name: Build & Push Debian 11 Image to VCR
 
 on:
@@ -39,6 +40,18 @@ jobs:
         run: |
           TAG="${INPUT_TAG:-latest}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Verify OIDC inputs
+        env:
+          TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          REPO_ID: ${{ github.repository_id }}
+          REPO: ${{ github.repository }}
+          WORKFLOW: ${{ github.workflow_ref }}
+        run: |
+          echo "Team: $TEAM_ID"
+          echo "Repository: $REPO"
+          echo "Repository ID: $REPO_ID"
+          echo "Workflow: $WORKFLOW"
 
       - name: Login to Vercel Container Registry
         uses: vercel/vcr-action/login@v1
