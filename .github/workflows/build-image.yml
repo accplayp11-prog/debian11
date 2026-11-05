@@ -44,26 +44,31 @@ jobs:
       - name: Verify OIDC inputs
         env:
           TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
           REPO_ID: ${{ github.repository_id }}
           REPO: ${{ github.repository }}
           WORKFLOW: ${{ github.workflow_ref }}
         run: |
-          echo "Team: $TEAM_ID"
+          echo "Team ID: $TEAM_ID"
+          echo "Team Slug: $TEAM_SLUG"
           echo "Repository: $REPO"
           echo "Repository ID: $REPO_ID"
           echo "Workflow: $WORKFLOW"
+
+          test -n "$TEAM_ID" || (echo "Missing VERCEL_TEAM_ID" && exit 1)
+          test -n "$TEAM_SLUG" || (echo "Missing VERCEL_TEAM_SLUG" && exit 1)
 
       - name: Login to Vercel Container Registry
         uses: vercel/vcr-action/login@v1
         with:
           team: ${{ vars.VERCEL_TEAM_ID }}
-          policy: pol_53384459-e142-4095-9a4f-aa6c32180a57
 
       - name: Build and push Debian 11 image
         env:
           TAG: ${{ steps.tag.outputs.tag }}
+          TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
         run: |
-          IMAGE="vcr.vercel.com/yassinehami652-3530/debian11/debian-11-terminal:${TAG}"
+          IMAGE="vcr.vercel.com/${TEAM_SLUG}/debian11/debian-11-terminal:${TAG}"
 
           echo "Building and pushing: $IMAGE"
 
