@@ -47,7 +47,7 @@ const SANDBOX_NAME = process.env.SANDBOX_NAME || "debian-shared-terminal";
 const SANDBOX_IMAGE = process.env.SANDBOX_IMAGE || "debian-11-terminal:latest";
 
 // 2 hours of inactivity before auto-stop
-const SANDBOX_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+const SANDBOX_TIMEOUT_MS = 45 * 60 * 1000;
 
 // ttyd WebSocket terminal port
 export const TERMINAL_PORT = 7681;
