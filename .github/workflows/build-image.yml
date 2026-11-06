@@ -41,29 +41,30 @@ jobs:
           TAG="${INPUT_TAG:-latest}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Verify OIDC inputs
+      - name: Verify configuration
         env:
           TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
           TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
-          REPO_ID: ${{ github.repository_id }}
-          REPO: ${{ github.repository }}
-          WORKFLOW: ${{ github.workflow_ref }}
         run: |
           echo "Team ID: $TEAM_ID"
           echo "Team Slug: $TEAM_SLUG"
-          echo "Repository: $REPO"
-          echo "Repository ID: $REPO_ID"
-          echo "Workflow: $WORKFLOW"
 
-          test -n "$TEAM_ID" || (echo "Missing VERCEL_TEAM_ID" && exit 1)
-          test -n "$TEAM_SLUG" || (echo "Missing VERCEL_TEAM_SLUG" && exit 1)
+          test -n "$TEAM_ID" || {
+            echo "Missing VERCEL_TEAM_ID variable"
+            exit 1
+          }
+
+          test -n "$TEAM_SLUG" || {
+            echo "Missing VERCEL_TEAM_SLUG variable"
+            exit 1
+          }
 
       - name: Login to Vercel Container Registry
         uses: vercel/vcr-action/login@v1
         with:
           team: ${{ vars.VERCEL_TEAM_ID }}
           audience: https://vercel.com
-          policy: pol_53384459-e142-4095-9a4f-aa6c32180a57
+          policy: pol_33a5ecc7-e10b-496a-9758-bf24508f0de0
 
       - name: Build and push Debian 11 image
         env:
@@ -86,3 +87,4 @@ jobs:
         run: |
           echo "## Debian 11 Image Published" >> "$GITHUB_STEP_SUMMARY"
           echo "Image: debian-11-terminal:${{ steps.tag.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Registry: Vercel Container Registry" >> "$GITHUB_STEP_SUMMARY"
