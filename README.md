@@ -57,7 +57,7 @@ Browser (xterm.js)
 ### Step 1: Clone and install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/debian-web-terminal.git
+git clone https://github.com/yassinejss/debian11.git
 cd debian-web-terminal
 npm install
 ```
