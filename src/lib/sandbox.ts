@@ -1,3 +1,4 @@
+
 /**
  * Sandbox library — per-user Vercel Sandbox management
  *
@@ -62,6 +63,7 @@ export function userSandboxName(userId: string): string {
 async function ensureUserSandboxRow(userId: string): Promise<void> {
   const db = getTursoClient();
   const name = userSandboxName(userId);
+
   await db.execute({
     sql: `INSERT OR IGNORE INTO user_sandboxes
             (id, user_id, sandbox_name, status, ttyd_port, image, created_at, updated_at)
@@ -74,7 +76,11 @@ async function ensureUserSandboxRow(userId: string): Promise<void> {
 async function setSandboxStatus(
   userId: string,
   status: string,
-  extras?: { lastStartedAt?: number; terminalUrl?: string; lastHeartbeatAt?: number }
+  extras?: {
+    lastStartedAt?: number;
+    terminalUrl?: string;
+    lastHeartbeatAt?: number;
+  }
 ): Promise<void> {
   try {
     const db = getTursoClient();
@@ -85,14 +91,17 @@ async function setSandboxStatus(
       extraSql += ", last_started_at = ?";
       args.push(extras.lastStartedAt);
     }
+
     if (extras?.terminalUrl !== undefined) {
       extraSql += ", terminal_url = ?";
       args.push(extras.terminalUrl);
     }
+
     if (extras?.lastHeartbeatAt !== undefined) {
       extraSql += ", last_heartbeat_at = ?";
       args.push(extras.lastHeartbeatAt);
     }
+
     args.push(userId);
 
     await db.execute({
@@ -107,49 +116,57 @@ async function setSandboxStatus(
 }
 
 /** Install ttyd if needed and start it, waiting until it listens. */
-async function startTtyd(sandbox: Sandbox, port: number): Promise<void> {
+async function startTtyd(
+  sandbox: Sandbox,
+  port: number
+): Promise<void> {
   console.log("[sandbox] Setting up ttyd...");
 
-  // Kill any existing instance
+  // Kill any existing instance.
+  // Commands run directly without sudo to avoid hostname resolution errors.
   await sandbox.runCommand({
     cmd: "bash",
     args: ["-c", "pkill -x ttyd 2>/dev/null || true"],
-    sudo: true,
   });
+
   await new Promise((r) => setTimeout(r, 400));
 
-  // Check installation
+  // Check installation.
   const checkResult = await sandbox.runCommand({
     cmd: "bash",
-    args: ["-c", "command -v ttyd >/dev/null 2>&1 && echo FOUND || echo NOT_FOUND"],
+    args: [
+      "-c",
+      "command -v ttyd >/dev/null 2>&1 && echo FOUND || echo NOT_FOUND",
+    ],
   });
+
   const checkOut = await checkResult.stdout();
 
   if (checkOut.includes("NOT_FOUND")) {
     console.log("[sandbox] Installing ttyd...");
+
     const installResult = await sandbox.runCommand({
       cmd: "bash",
       args: [
         "-c",
         "curl -fsSL --retry 5 https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -o /usr/local/bin/ttyd && chmod 0755 /usr/local/bin/ttyd",
       ],
-      sudo: true,
       timeoutMs: 90000,
     });
+
     if (installResult.exitCode !== 0) {
       const err = await installResult.stderr();
       throw new Error(`ttyd installation failed: ${err}`);
     }
   }
 
-  // Start ttyd (detached)
+  // Start ttyd (detached).
   const startResult = await sandbox.runCommand({
     cmd: "bash",
     args: [
       "-c",
       `nohup /usr/local/bin/ttyd --port ${port} --interface 0.0.0.0 --writable --client-option enableZmodem=false bash -l > /tmp/ttyd.log 2>&1 & echo $! > /tmp/ttyd.pid && echo "started"`,
     ],
-    sudo: true,
     detached: true,
   });
 
@@ -158,14 +175,20 @@ async function startTtyd(sandbox: Sandbox, port: number): Promise<void> {
     throw new Error(`Failed to launch ttyd: ${err}`);
   }
 
-  // Poll until ready
+  // Poll until ready.
   let ready = false;
+
   for (let i = 0; i < 20; i++) {
     await new Promise((r) => setTimeout(r, 1000));
+
     const v = await sandbox.runCommand({
       cmd: "bash",
-      args: ["-c", `ss -tln 2>/dev/null | grep -q ':${port} ' && echo READY || echo WAITING`],
+      args: [
+        "-c",
+        `ss -tln 2>/dev/null | grep -q ':${port} ' && echo READY || echo WAITING`,
+      ],
     });
+
     if ((await v.stdout()).includes("READY")) {
       ready = true;
       break;
@@ -177,6 +200,7 @@ async function startTtyd(sandbox: Sandbox, port: number): Promise<void> {
       cmd: "bash",
       args: ["-c", "cat /tmp/ttyd.log 2>/dev/null || echo 'no log'"],
     });
+
     throw new Error(`ttyd not ready. Log: ${await logResult.stdout()}`);
   }
 
@@ -184,18 +208,23 @@ async function startTtyd(sandbox: Sandbox, port: number): Promise<void> {
 }
 
 /** Get or create a Sandbox for the specified user. */
-export async function getOrCreateUserSandbox(userId: string): Promise<Sandbox> {
+export async function getOrCreateUserSandbox(
+  userId: string
+): Promise<Sandbox> {
   const cached = sandboxCache.get(userId);
   if (cached) return cached;
 
   if (initInProgress.has(userId)) {
     let waited = 0;
+
     while (initInProgress.has(userId) && waited < 90000) {
       await new Promise((r) => setTimeout(r, 500));
       waited += 500;
     }
+
     const c = sandboxCache.get(userId);
     if (c) return c;
+
     throw new Error("Sandbox initialization timed out");
   }
 
@@ -203,8 +232,10 @@ export async function getOrCreateUserSandbox(userId: string): Promise<Sandbox> {
 
   try {
     await ensureUserSandboxRow(userId);
+
     const sandboxName = userSandboxName(userId);
     console.log(`[sandbox] Initializing sandbox: ${sandboxName}`);
+
     await setSandboxStatus(userId, "starting");
 
     const sandbox = await Sandbox.getOrCreate({
@@ -214,10 +245,12 @@ export async function getOrCreateUserSandbox(userId: string): Promise<Sandbox> {
       timeout: SANDBOX_TIMEOUT_MS,
       persistent: true,
       resume: true,
+
       onCreate: async (sbx) => {
         console.log(`[sandbox] onCreate: ${sandboxName}`);
         await startTtyd(sbx, TERMINAL_PORT);
       },
+
       onResume: async (sbx) => {
         console.log(`[sandbox] onResume: ${sandboxName}`);
         await startTtyd(sbx, TERMINAL_PORT);
@@ -226,8 +259,14 @@ export async function getOrCreateUserSandbox(userId: string): Promise<Sandbox> {
 
     sandboxCache.set(userId, sandbox);
 
-    const rawDomain = String(sandbox.domain(TERMINAL_PORT)).trim();
-    const hostname = rawDomain.replace(/^(https?:\/\/)+/i, "").replace(/\/+$/, "");
+    const rawDomain = String(
+      sandbox.domain(TERMINAL_PORT)
+    ).trim();
+
+    const hostname = rawDomain
+      .replace(/^(https?:\/\/)+/i, "")
+      .replace(/\/+$/, "");
+
     const terminalUrl = `https://${hostname}`;
     const now = Math.floor(Date.now() / 1000);
 
@@ -238,6 +277,7 @@ export async function getOrCreateUserSandbox(userId: string): Promise<Sandbox> {
     });
 
     console.log(`[sandbox] Ready: ${terminalUrl}`);
+
     return sandbox;
   } catch (err) {
     sandboxCache.delete(userId);
@@ -249,38 +289,70 @@ export async function getOrCreateUserSandbox(userId: string): Promise<Sandbox> {
 }
 
 /** Get the terminal URL for a user (starts sandbox if needed). */
-export async function getUserTerminalUrl(userId: string): Promise<string> {
+export async function getUserTerminalUrl(
+  userId: string
+): Promise<string> {
   const sandbox = await getOrCreateUserSandbox(userId);
-  const rawDomain = String(sandbox.domain(TERMINAL_PORT)).trim();
-  const hostname = rawDomain.replace(/^(https?:\/\/)+/i, "").replace(/\/+$/, "");
-  if (!hostname) throw new Error("Sandbox returned empty terminal domain");
+
+  const rawDomain = String(
+    sandbox.domain(TERMINAL_PORT)
+  ).trim();
+
+  const hostname = rawDomain
+    .replace(/^(https?:\/\/)+/i, "")
+    .replace(/\/+$/, "");
+
+  if (!hostname) {
+    throw new Error("Sandbox returned empty terminal domain");
+  }
+
   return `https://${hostname}`;
 }
 
 /** Read sandbox info from the DB without starting anything. */
-export async function getUserSandboxInfo(userId: string): Promise<SandboxInfo> {
+export async function getUserSandboxInfo(
+  userId: string
+): Promise<SandboxInfo> {
   try {
     await ensureUserSandboxRow(userId);
+
     const db = getTursoClient();
+
     const result = await db.execute({
       sql: `SELECT sandbox_name, status, last_started_at, last_heartbeat_at, terminal_url
               FROM user_sandboxes WHERE user_id = ?`,
       args: [userId],
     });
+
     if (result.rows.length === 0) {
-      return { sandboxName: userSandboxName(userId), status: "unknown" };
+      return {
+        sandboxName: userSandboxName(userId),
+        status: "unknown",
+      };
     }
+
     const row = result.rows[0];
+
     return {
       sandboxName: String(row.sandbox_name),
       status: String(row.status) as SandboxInfo["status"],
-      terminalUrl: row.terminal_url ? String(row.terminal_url) : undefined,
-      lastStartedAt: row.last_started_at ? Number(row.last_started_at) : undefined,
-      lastHeartbeatAt: row.last_heartbeat_at ? Number(row.last_heartbeat_at) : undefined,
+      terminalUrl: row.terminal_url
+        ? String(row.terminal_url)
+        : undefined,
+      lastStartedAt: row.last_started_at
+        ? Number(row.last_started_at)
+        : undefined,
+      lastHeartbeatAt: row.last_heartbeat_at
+        ? Number(row.last_heartbeat_at)
+        : undefined,
     };
   } catch (err) {
     console.error("[sandbox] getSandboxInfo error:", err);
-    return { sandboxName: userSandboxName(userId), status: "unknown" };
+
+    return {
+      sandboxName: userSandboxName(userId),
+      status: "unknown",
+    };
   }
 }
 
@@ -307,7 +379,9 @@ export async function registerManagedProcess(
 ): Promise<string> {
   const db = getTursoClient();
   const id = randomUUID();
-  const logFile = opts.logFile || `/tmp/proc-${id.substring(0, 8)}.log`;
+
+  const logFile =
+    opts.logFile || `/tmp/proc-${id.substring(0, 8)}.log`;
 
   await db.execute({
     sql: `INSERT INTO managed_processes
@@ -315,7 +389,10 @@ export async function registerManagedProcess(
              status, failure_count, max_failures, is_interactive, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, 'stopped', 0, ?, ?, unixepoch(), unixepoch())`,
     args: [
-      id, userId, opts.name, opts.command,
+      id,
+      userId,
+      opts.name,
+      opts.command,
       opts.workingDir ?? "/root",
       opts.restartPolicy ?? "on-failure",
       logFile,
@@ -327,8 +404,11 @@ export async function registerManagedProcess(
   return id;
 }
 
-export async function listManagedProcesses(userId: string): Promise<ManagedProcess[]> {
+export async function listManagedProcesses(
+  userId: string
+): Promise<ManagedProcess[]> {
   const db = getTursoClient();
+
   const result = await db.execute({
     sql: `SELECT id, user_id, name, command, working_dir, restart_policy,
                  log_file, status, pid, failure_count, max_failures,
@@ -350,8 +430,12 @@ export async function listManagedProcesses(userId: string): Promise<ManagedProce
     failureCount: Number(r.failure_count),
     maxFailures: Number(r.max_failures),
     createdAt: Number(r.created_at),
-    lastStartedAt: r.last_started_at ? Number(r.last_started_at) : undefined,
-    lastError: r.last_error ? String(r.last_error) : undefined,
+    lastStartedAt: r.last_started_at
+      ? Number(r.last_started_at)
+      : undefined,
+    lastError: r.last_error
+      ? String(r.last_error)
+      : undefined,
     isInteractive: Boolean(r.is_interactive),
   }));
 }
@@ -361,34 +445,50 @@ export async function startManagedProcess(
   processId: string
 ): Promise<{ success: boolean; error?: string }> {
   const db = getTursoClient();
+
   const result = await db.execute({
     sql: "SELECT * FROM managed_processes WHERE id = ? AND user_id = ?",
     args: [processId, userId],
   });
 
-  if (result.rows.length === 0) return { success: false, error: "Process not found" };
+  if (result.rows.length === 0) {
+    return { success: false, error: "Process not found" };
+  }
 
   const proc = result.rows[0];
+
   if (Boolean(proc.is_interactive)) {
-    return { success: false, error: "Interactive processes cannot be auto-started" };
+    return {
+      success: false,
+      error: "Interactive processes cannot be auto-started",
+    };
   }
 
   try {
     const sandbox = await getOrCreateUserSandbox(userId);
+
     const command = String(proc.command);
     const workingDir = String(proc.working_dir);
     const logFile = String(proc.log_file);
 
-    // Check if already running
+    // Check if already running.
     if (proc.pid) {
       const checkResult = await sandbox.runCommand({
         cmd: "bash",
-        args: ["-c", `kill -0 ${proc.pid} 2>/dev/null && echo RUNNING || echo DEAD`],
+        args: [
+          "-c",
+          `kill -0 ${proc.pid} 2>/dev/null && echo RUNNING || echo DEAD`,
+        ],
       });
-      if ((await checkResult.stdout()).includes("RUNNING")) return { success: true };
+
+      if ((await checkResult.stdout()).includes("RUNNING")) {
+        return { success: true };
+      }
     }
 
-    const startCmd = `cd "${workingDir}" && nohup bash -c ${JSON.stringify(command)} >> "${logFile}" 2>&1 & echo $!`;
+    const startCmd =
+      `cd "${workingDir}" && nohup bash -c ${JSON.stringify(command)} >> "${logFile}" 2>&1 & echo $!`;
+
     const startResult = await sandbox.runCommand({
       cmd: "bash",
       args: ["-c", startCmd],
@@ -397,7 +497,10 @@ export async function startManagedProcess(
 
     const pidStr = (await startResult.stdout()).trim();
     const pid = parseInt(pidStr, 10);
-    if (isNaN(pid)) throw new Error(`Bad PID from start: ${pidStr}`);
+
+    if (isNaN(pid)) {
+      throw new Error(`Bad PID from start: ${pidStr}`);
+    }
 
     await db.execute({
       sql: `UPDATE managed_processes
@@ -409,7 +512,9 @@ export async function startManagedProcess(
 
     return { success: true };
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
+    const errMsg =
+      err instanceof Error ? err.message : String(err);
+
     await db.execute({
       sql: `UPDATE managed_processes
               SET status = 'failed', last_error = ?,
@@ -417,6 +522,7 @@ export async function startManagedProcess(
               WHERE id = ?`,
       args: [errMsg.substring(0, 500), processId],
     });
+
     return { success: false, error: errMsg };
   }
 }
@@ -426,21 +532,29 @@ export async function stopManagedProcess(
   processId: string
 ): Promise<{ success: boolean; error?: string }> {
   const db = getTursoClient();
+
   const result = await db.execute({
     sql: "SELECT pid FROM managed_processes WHERE id = ? AND user_id = ?",
     args: [processId, userId],
   });
 
-  if (result.rows.length === 0) return { success: false, error: "Process not found" };
+  if (result.rows.length === 0) {
+    return { success: false, error: "Process not found" };
+  }
 
   try {
     const pid = result.rows[0].pid;
+
     if (pid) {
       const sandbox = sandboxCache.get(userId);
+
       if (sandbox) {
         await sandbox.runCommand({
           cmd: "bash",
-          args: ["-c", `kill -TERM ${pid} 2>/dev/null || true; sleep 2; kill -9 ${pid} 2>/dev/null || true`],
+          args: [
+            "-c",
+            `kill -TERM ${pid} 2>/dev/null || true; sleep 2; kill -9 ${pid} 2>/dev/null || true`,
+          ],
         });
       }
     }
@@ -455,17 +569,26 @@ export async function stopManagedProcess(
 
     return { success: true };
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
-export async function deleteManagedProcess(userId: string, processId: string): Promise<boolean> {
+export async function deleteManagedProcess(
+  userId: string,
+  processId: string
+): Promise<boolean> {
   await stopManagedProcess(userId, processId);
+
   const db = getTursoClient();
+
   const result = await db.execute({
     sql: "DELETE FROM managed_processes WHERE id = ? AND user_id = ?",
     args: [processId, userId],
   });
+
   return (result.rowsAffected ?? 0) > 0;
 }
 
@@ -473,23 +596,35 @@ export async function recoverManagedProcesses(
   userId: string
 ): Promise<{ restarted: number; failed: number; details: string[] }> {
   const processes = await listManagedProcesses(userId);
+
   const details: string[] = [];
   let restarted = 0;
   let failed = 0;
 
   for (const proc of processes) {
-    if (proc.isInteractive || proc.restartPolicy === "never") continue;
-    if (proc.failureCount >= proc.maxFailures) {
-      details.push(`SKIP ${proc.name}: max failures (${proc.failureCount}/${proc.maxFailures})`);
+    if (proc.isInteractive || proc.restartPolicy === "never") {
       continue;
     }
 
-    // Exponential backoff between restarts
+    if (proc.failureCount >= proc.maxFailures) {
+      details.push(
+        `SKIP ${proc.name}: max failures (${proc.failureCount}/${proc.maxFailures})`
+      );
+      continue;
+    }
+
+    // Exponential backoff between restarts.
     if (proc.failureCount > 0) {
-      await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** proc.failureCount, 30000)));
+      await new Promise((r) =>
+        setTimeout(
+          r,
+          Math.min(1000 * 2 ** proc.failureCount, 30000)
+        )
+      );
     }
 
     const result = await startManagedProcess(userId, proc.id);
+
     if (result.success) {
       restarted++;
       details.push(`STARTED ${proc.name}`);
@@ -506,6 +641,8 @@ export async function recoverManagedProcesses(
 export async function getSandboxStatus() {
   return { name: "shared", status: "unknown" as const };
 }
+
 export function invalidateSandboxCache() {
   sandboxCache.clear();
 }
+
